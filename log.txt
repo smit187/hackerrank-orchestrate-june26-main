@@ -1,0 +1,179 @@
+You are a Principal Software Engineer, AI Systems Architect, and Production Reliability Engineer.
+
+Your mission is to implement a complete, grading-safe, production-grade solution for the HackerRank Orchestrate hackathon.
+
+Primary objectives, in strict priority order:
+1. Follow repository rules exactly.
+2. Match the automated grader’s expectations exactly.
+3. Produce deterministic, fault-tolerant code.
+4. Avoid hallucinations and invented assumptions.
+5. Deliver complete files with no placeholders or omissions.
+
+Hard rules:
+- Read and obey AGENTS.md before anything else.
+- Read and obey README.md before anything else.
+- Inspect the repository files and dataset schemas before coding.
+- Do not invent column names, labels, file paths, APIs, or output formats.
+- If something is not explicitly verified in the repository, state that it was not found.
+- Do not replace the required architecture with a different one.
+- Do not skip error handling.
+- Do not crash on malformed input.
+- Do not output pseudocode.
+- Do not truncate any file.
+- Do not say “rest omitted” or similar.
+- Keep output deterministic and grader-friendly.
+- Do not hardcode test labels or file-specific answers.
+- Must read the provided CSV files and local images.
+- Must produce `output.csv` with the exact schema in `problem_statement.md`.
+- Must include an evaluation workflow.
+- Must run all claims from `claims.zip` with the agent and submit the results as CSV.
+- Must avoid hardcoded test labels or file-specific answers.
+- Beyond that, you are free to use your own approach and innovation: VLMs, LLMs, structured prompting, evaluation pipelines, model comparison, or anything else.
+
+Step 1: Comply with the Rules Immediately (The AGENTS.md Protocol)
+
+Before writing any code, I would set up the automated logging required by AGENTS.md. I would ensure my development environment automatically logs every interaction to the specified transcript file, because if this is missing or malformed, the submission is disqualified.
+
+In your response, first produce a repository compliance section with these exact checks:
+- AGENTS.md verified
+- README.md verified
+- Logging protocol identified and active
+- Transcript requirements identified
+- Submission requirements identified
+- Evaluation requirements identified
+- Repository compliance confirmed
+
+Step 2: Test-Driven Prompt Engineering (TDD for Prompts)
+
+Instead of guessing if the system works on the hidden test set, build `code/evaluation/main.py` first.
+
+Requirements for `code/evaluation/main.py`:
+- load `dataset/sample_claims.csv`
+- compare model output against expected outputs in the CSV
+- calculate Macro F1-Score for `issue_type`, `object_part`, and `claim_status`
+- calculate Exact Match Accuracy
+- print a readable score report
+- include a confusion matrix or equivalent per-label summary
+- safely handle missing predictions, invalid labels, empty rows, and malformed CSV data
+- use modular functions, type hints, and docstrings
+- be unit-test-friendly
+
+Step 3: Architecture — The "Hydration & Guardrail" Pattern
+
+Do not send raw CSV rows to the LLM. Build a 3-layer pipeline in `code/main.py`.
+
+Layer 1: Context Hydration (Python)
+- load `dataset/user_history.csv` and `dataset/evidence_requirements.csv` into Pandas DataFrames
+- convert them into memory dictionaries for fast lookup
+- when processing a claim, use Python to look up the user’s risk profile and the relevant evidence rules
+- if the user has a bad history (`rejected_claim > 0`), programmatically flag `user_history_risk`
+- do not rely on the LLM to calculate risk
+
+Layer 2: The Vision Agent (Async VLM)
+- use `gpt-4o` or `claude-3-5-sonnet` through an async Python SDK or async HTTP client
+- feed the VLM the pre-filtered rules, hydrated context, and images
+- enforce a `<scratchpad>` reasoning block so the model inspects the image before producing JSON
+- read `image_paths`, split by `;`, load images, convert them to base64, and attach them to the payload
+- include timeouts, retries, and rate-limit-safe handling
+
+Layer 3: The Deterministic Guardrail (Pydantic / Regex)
+- use a strict Regex parser to extract the JSON from the VLM response
+- ignore any `<scratchpad>` reasoning text
+- validate and normalize the JSON with Pydantic
+- enforce lowercase categorical strings and exact default values
+- if the VLM outputs an invalid category, catch it and inject a safe fallback such as `claim_status: not_enough_information`
+- guarantee the pipeline does not crash
+
+Step 4: High-Performance Execution (Async Batching)
+
+Processing multi-modal claims sequentially is too slow. Write an asyncio processing loop with a concurrency semaphore to maximize throughput without hitting API limits.
+
+Implement these exact requirements in `code/main.py`:
+- `load_contexts()` reads and prepares the lookup data
+- `enforce_strict_schema(raw_response: str, default_row: dict) -> dict` extracts and validates the model output
+- `async def main()` orchestrates the batch run
+- use `asyncio.Semaphore(20)` to control concurrency
+- use `asyncio.gather()` to process rows concurrently
+- preserve output order
+- export the final predictions to `output.csv`
+- write columns in the exact required order from the problem statement
+- ensure one failed row never terminates the full run
+
+Step 5: Write a Killer Operational Analysis
+
+Generate `evaluation/evaluation_report.md` as a professional engineering report.
+
+Include these sections:
+- Executive Summary
+- Architecture Overview
+- Context Hydration Layer
+- Vision Processing Layer
+- Deterministic Guardrail Layer
+- Async Orchestration Layer
+- Caching Strategy
+- Cost Analysis
+- Throttling & Concurrency
+- Failure Recovery
+- Production Readiness Assessment
+
+Mandatory content for the report:
+- Explain base64 image hashing as a cache key for VLM decisions
+- Explain that identical fraudulent images can reuse cached decisions instead of calling the API again
+- Include token math with a concrete cost estimate
+- Explain the use of `asyncio.Semaphore(20)` to reduce rate-limit risk while maximizing throughput
+- Describe fallback behavior, validation strategy, and operational reliability
+
+Required file generation order:
+1. `code/evaluation/main.py`
+2. `code/main.py`
+3. `code/prompts.py`
+4. `evaluation/evaluation_report.md`
+
+For each file:
+- state the file path
+- briefly explain its purpose
+- provide the full file content
+- do not omit code
+- do not use placeholders
+- do not stop halfway
+
+After each file, perform a self-review for syntax, schema compliance, grader risk, and error handling.
+Fix issues before moving to the next file.
+
+For `code/prompts.py`, create the VLM prompt template with:
+- the required taxonomy
+- the required output schema
+- `<scratchpad>` reasoning support
+- exactly one valid JSON object inside a fenced `json` block
+- strict deterministic instructions
+- no extra commentary outside the required format
+
+Final output must end with a concise compliance checklist confirming:
+- AGENTS.md followed
+- README.md followed
+- logging protocol identified
+- evaluation harness implemented
+- async pipeline implemented
+- strict guardrail implemented
+- fallback handling implemented
+- concurrency throttling implemented
+- output schema preserved
+- submission ready
+
+
+Done. I made it easier to use and more submission-aligned.
+
+Added:
+
+- [code/run_all.py](C:/Users/DTAdmin/Desktop/hackerrank-orchestrate-june26-main/code/run_all.py): one command for evaluation, prediction, validation, report mirroring, and `code.zip` creation.
+- [code/SUBMISSION_MANIFEST.md](C:/Users/DTAdmin/Desktop/hackerrank-orchestrate-june26-main/code/SUBMISSION_MANIFEST.md): clear list of required files and entry points.
+- [code/evaluation/evaluation_report.md](C:/Users/DTAdmin/Desktop/hackerrank-orchestrate-june26-main/code/evaluation/evaluation_report.md): report now included inside the code package too.
+- Updated [code/README.md](C:/Users/DTAdmin/Desktop/hackerrank-orchestrate-june26-main/code/README.md) with a fastest-path workflow and real-life applications.
+- Updated [evaluation/evaluation_report.md](C:/Users/DTAdmin/Desktop/hackerrank-orchestrate-june26-main/evaluation/evaluation_report.md) with real-world production use cases.
+
+Verified:
+
+- `python -m py_compile ...` passed.
+- `python code/run_all.py --use-vlm never --make-zip` passed.
+- [output.csv](C:/Users/DTAdmin/Desktop/hackerrank-orchestrate-june26-main/output.csv) has `44` rows for `44` claims and exact required schema.
+- [code.zip](C:/Users/DTAdmin/Desktop/hackerrank-orchestrate-june26-main/code.zip) was created and contains the runnable code plus evaluation assets.
