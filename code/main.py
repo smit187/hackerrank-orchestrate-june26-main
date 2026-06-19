@@ -249,6 +249,58 @@ def claimant_text(text: str) -> str:
     return " ".join(segments) if segments else str(text or "")
 
 
+def sanitize_claim_text(text: str) -> str:
+    """Sanitize the claim transcript to reduce prompt injection while preserving meaning."""
+    raw = str(text or "")
+    cleaned = re.sub(r"```.*?```", " ", raw, flags=re.DOTALL)
+    cleaned = re.sub(r"(?i)ignore (all )?previous instructions", "[redacted]", cleaned)
+    cleaned = re.sub(r"(?i)(system|assistant|user) prompt", "[redacted]", cleaned)
+    cleaned = re.sub(r"(?i)follow (these )?instructions", "[redacted]", cleaned)
+    cleaned = re.sub(r"(?i)do not.*follow.*these.*rules", "[redacted]", cleaned)
+    cleaned = re.sub(r"(?i)disregard (all )?instructions", "[redacted]", cleaned)
+    cleaned = re.sub(r"(?i)reset (the )?system", "[redacted]", cleaned)
+    cleaned = re.sub(r"[\r\n]+", " ", cleaned)
+    return cleaned.strip()
+
+
+def detect_image_quality_flags(path: Path) -> List[str]:
+    """Infer basic image quality concerns without external vision libraries."""
+    flags: List[str] = []
+    if not path.exists():
+        return flags
+    try:
+        size = path.stat().st_size
+        name = path.name.lower()
+        if size < 16_384:
+            flags.append("damage_not_visible")
+        if any(token in name for token in ["blur", "blurry", "dark", "glare", "reflection"]):
+            flags.append("blurry_image")
+        if path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}:
+            flags.append("non_original_image")
+    except OSError:
+        pass
+    return flags
+
+
+def estimate_claim_confidence(issue: str, part: str, evidence_met: bool, risk_flags: Iterable[str]) -> int:
+    """Estimate a simple confidence score for automated claim review."""
+    score = 0
+    if evidence_met:
+        score += 40
+    if issue and issue != "unknown":
+        score += 30
+    if part and part != "unknown":
+        score += 20
+    for flag in risk_flags:
+        if flag == "manual_review_required":
+            score -= 30
+        elif flag in {"blurry_image", "damage_not_visible", "wrong_angle", "text_instruction_present", "user_history_risk"}:
+            score -= 15
+        else:
+            score -= 5
+    return max(0, min(100, score))
+
+
 def extract_claim_issue(text: str, claim_object: str) -> str:
     """Infer the claimed issue family from the conversation text."""
     lower = text.lower()
@@ -361,16 +413,24 @@ def build_default_row(row: Mapping[str, str], contexts: Contexts) -> Dict[str, s
     if image_paths and len(existing) < len(image_paths):
         risk_flags.extend(["damage_not_visible", "manual_review_required"])
 
+    for path in existing:
+        risk_flags.extend(detect_image_quality_flags(path))
+
     issue = extract_claim_issue(focused_claim_text, claim_object)
     part = extract_object_part(focused_claim_text, claim_object)
     evidence_met = bool(existing)
-    status = "supported" if evidence_met and issue != "unknown" and part != "unknown" else "not_enough_information"
+    confidence = estimate_claim_confidence(issue, part, evidence_met, risk_flags)
+
+    if confidence < 40 and evidence_met:
+        risk_flags.append("manual_review_required")
+
+    status = "supported" if evidence_met and issue != "unknown" and part != "unknown" and confidence >= 50 else "not_enough_information"
     if not evidence_met:
         reason = "No readable submitted image was available to evaluate the claim."
         justification = "The image evidence could not be loaded, so the claim cannot be verified."
-    elif issue == "unknown" or part == "unknown":
-        reason = "The submitted image set exists, but the claimed issue or part is not specific enough for a confident automated review."
-        justification = "The claim text or visual evidence is ambiguous, so the safest decision is not enough information."
+    elif issue == "unknown" or part == "unknown" or confidence < 50:
+        reason = "The submitted image set exists, but the claim is too ambiguous or image quality is too low for a confident automated review."
+        justification = "The claim text or visual evidence is ambiguous or low confidence, so the safest decision is not enough information."
         risk_flags.append("manual_review_required")
     else:
         req_count = len(applicable_requirements(contexts, claim_object))
@@ -422,10 +482,14 @@ def enforce_strict_schema(raw_response: str, default_row: dict) -> dict:
     severity = normalize_category(merged.get("severity"), ALLOWED_SEVERITY, default_row.get("severity", "unknown"))
     part = normalize_category(merged.get("object_part"), ALL_OBJECT_PARTS, default_row.get("object_part", "unknown"))
 
+    risk_flags = normalize_risk_flags(merged.get("risk_flags"), default_row.get("risk_flags", "none").split(";"))
+    if "manual_review_required" in risk_flags.split(";"):
+        status = "not_enough_information"
+
     result = {
         "evidence_standard_met": normalize_bool(merged.get("evidence_standard_met"), default_row.get("evidence_standard_met", "false")),
         "evidence_standard_met_reason": str(merged.get("evidence_standard_met_reason") or default_row.get("evidence_standard_met_reason") or "").strip()[:500],
-        "risk_flags": normalize_risk_flags(merged.get("risk_flags"), default_row.get("risk_flags", "none").split(";")),
+        "risk_flags": risk_flags,
         "issue_type": issue,
         "object_part": part,
         "claim_status": status,
@@ -465,13 +529,50 @@ def save_cache(path: Path, cache: Mapping[str, str]) -> None:
         return
 
 
+def summarize_claim_text(text: str) -> str:
+    """Produce a compact summary of the user's claim from the transcript."""
+    lower = sanitize_claim_text(text).lower()
+    summary_parts: list[str] = []
+    if any(term in lower for term in ["not inside", "missing contents", "missing product", "not there", "not in the box"]):
+        summary_parts.append("Claim alleges missing contents or missing part")
+    if any(term in lower for term in ["torn", "tear", "opened", "phati", "torn-open"]):
+        summary_parts.append("Claim alleges torn or opened packaging")
+    if any(term in lower for term in ["crush", "crushed", "damaged", "dab gaya"]):
+        summary_parts.append("Claim alleges crushed or damaged item")
+    if any(term in lower for term in ["scratch", "scraped", "mark", "scratched"]):
+        summary_parts.append("Claim alleges scratch or scrape")
+    if any(term in lower for term in ["dent", "dented", "hail", "parachoques", "danado", "dano"]):
+        summary_parts.append("Claim alleges dent")
+    if any(term in lower for term in ["broken", "broke", "broken part", "no longer opens", "hinge"]):
+        summary_parts.append("Claim alleges broken or detached part")
+    if any(term in lower for term in ["water", "wet", "rain", "liquid damage"]):
+        summary_parts.append("Claim alleges water damage")
+    if any(term in lower for term in ["stain", "coffee", "oil", "oily"]):
+        summary_parts.append("Claim alleges stain")
+    if "glass" in lower or "windshield" in lower:
+        summary_parts.append("Claim mentions glass or windshield")
+    if "screen" in lower or "display" in lower:
+        summary_parts.append("Claim mentions screen or display")
+    if "keyboard" in lower or "keys" in lower or "keycaps" in lower:
+        summary_parts.append("Claim mentions keyboard")
+    if "mirror" in lower or "side mirror" in lower:
+        summary_parts.append("Claim mentions side mirror")
+    if "seal" in lower or "tape" in lower or "flap" in lower:
+        summary_parts.append("Claim mentions seal or packaging closure")
+    if not summary_parts:
+        summary_parts.append("Claim describes damage or issue in a general way")
+    return "; ".join(dict.fromkeys(summary_parts))
+
+
 def build_prompt(row: Mapping[str, str], contexts: Contexts, images: Sequence[Mapping[str, str]]) -> str:
     """Render the user prompt from hydrated context."""
     user = contexts.user_history.get(str(row.get("user_id", "")).strip(), {})
     requirements = applicable_requirements(contexts, str(row.get("claim_object", "")))
+    sanitized_claim = sanitize_claim_text(str(row.get("user_claim", "")))
     return USER_PROMPT_TEMPLATE.format(
         claim_object=row.get("claim_object", ""),
-        user_claim=row.get("user_claim", ""),
+        claim_summary=summarize_claim_text(sanitized_claim),
+        user_claim=sanitized_claim,
         user_history=json.dumps(user, ensure_ascii=False, sort_keys=True),
         evidence_requirements=json.dumps(requirements, ensure_ascii=False, sort_keys=True),
         image_ids=", ".join(image["id"] for image in images) or "none",

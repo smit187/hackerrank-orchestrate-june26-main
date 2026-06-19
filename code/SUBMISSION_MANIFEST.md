@@ -18,7 +18,7 @@ This project follows the source contract from `problem_statement.md`,
 ## Included Code Files
 
 - `code/main.py`: context hydration, optional async VLM processing, strict
-  schema guardrail, and output writer.
+  schema guardrail, prompt sanitization, confidence scoring, and output writer.
 - `code/prompts.py`: VLM prompt template and allowed taxonomy.
 - `code/run_all.py`: one-command evaluation, prediction, validation, and
   optional `code.zip` creation.

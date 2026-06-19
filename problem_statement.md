@@ -24,6 +24,8 @@ For each claim, your system should:
 - decide whether the claim is supported, contradicted, or lacks enough information
 - select the image IDs that support the decision
 - flag image quality, mismatch, authenticity, or user-history risks
+- handle instruction-like or adversarial text in the claim transcript safely
+- escalate ambiguous or low-confidence evidence to manual review rather than overconfident automated decisions
 - estimate severity
 - produce short justifications grounded in the images
 

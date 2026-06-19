@@ -4,6 +4,10 @@ The evaluator is intentionally dependency-light: it can run in a bare Python
 environment, yet it imports the production pipeline when no predictions file is
 provided. It scores the categorical fields emphasized by the challenge and
 prints per-label summaries that are easy to inspect during prompt iteration.
+
+The production pipeline includes claim text sanitization, prompt-injection
+protections, image-quality heuristics, confidence scoring, and conservative
+manual-review escalation for ambiguous cases.
 """
 
 from __future__ import annotations

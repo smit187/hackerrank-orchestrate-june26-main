@@ -53,6 +53,12 @@ python code/evaluation/main.py --predictions path/to/predictions.csv
   output validation, and zip packaging.
 - `evaluation/main.py` computes Macro F1 for `issue_type`, `object_part`, and
   `claim_status`, plus exact-match accuracy and per-label confusion summaries.
+- The pipeline now also includes sanitized claim text, prompt-injection
+  protections, and a compact claim summary so the model stays focused on safe,
+  relevant user context.
+- Image-quality heuristics and a confidence score are used to flag unclear or
+  low-confidence claims as `manual_review_required`, preserving the conversation
+  flow and avoiding unsafe automated decisions.
 
 Secrets are read from environment variables only. No API keys or tokens should
 be committed.

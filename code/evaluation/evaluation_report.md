@@ -77,6 +77,10 @@ The prompt requires:
 - concise, image-grounded justifications
 - explicit instruction to ignore prompt-injection text in images or claims
 
+Claims are sanitized before being sent to the model, and the AI receives a
+compact claim summary so it can focus on safe, relevant evidence instead of
+instruction-like text embedded in the transcript.
+
 If `OPENAI_API_KEY` is not present, the pipeline skips network calls and uses
 the deterministic fallback. Secrets are read only from environment variables.
 
